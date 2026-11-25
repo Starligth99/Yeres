@@ -1,10 +1,36 @@
-const initialData = JSON.parse(document.getElementById("infinity-data").textContent);
+const STORAGE_KEY = "infinity-ops-data-v1";
+let storageLoadError = null;
+
+function cloneData(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function loadInitialData() {
+  const seed = window.INFINITY_SEED_DATA;
+  if (!seed) throw new Error("No se encontraron los datos iniciales de la demostración.");
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return cloneData(seed);
+    const data = JSON.parse(stored);
+    if (!data || !Array.isArray(data.operations) || !Array.isArray(data.clients) ||
+        !Array.isArray(data.alerts) || !Array.isArray(data.customs) || !Array.isArray(data.inventory) ||
+        typeof data.checkedDocuments !== "object" || data.checkedDocuments === null) {
+      throw new Error("El formato de los datos guardados no es válido.");
+    }
+    return data;
+  } catch (error) {
+    storageLoadError = error;
+    console.error("No se pudieron leer los datos guardados en este navegador.", error);
+    return cloneData(seed);
+  }
+}
+
+const initialData = loadInitialData();
 const operations = initialData.operations;
 const clients = initialData.clients;
 const alerts = initialData.alerts;
 const customsReviews = initialData.customs;
 const inventoryItems = initialData.inventory || [];
-const cartoBasemapApiKey = JSON.parse(document.getElementById("carto-basemap-api-key").textContent);
 
 const transportDocuments = {
   Marítimo: [
@@ -99,14 +125,6 @@ function showMapLoadError(elementId, title, message) {
   errorPanel.hidden = false;
 }
 
-function showMissingCartoApiKey(elementId) {
-  showMapLoadError(
-    elementId,
-    "CARTO requiere una API key",
-    "Configura CARTO_BASEMAP_API_KEY en PowerShell y reinicia el servidor."
-  );
-}
-
 let activeMapInfoWindow = null;
 
 function closeMapInfoWindow() {
@@ -147,9 +165,10 @@ function createCartoMap(mapElement, errorElementId) {
   if (!window.L) throw new Error("Leaflet no se cargó.");
   const map = window.L.map(mapElement, { scrollWheelZoom: false }).setView([23.6, -102.5], 5);
   const tiles = window.L.tileLayer(
-    "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=" + encodeURIComponent(cartoBasemapApiKey),
+    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
     {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attribution/">CARTO</a>',
+      subdomains: "abcd",
       maxZoom: 20
     }
   );
@@ -161,7 +180,7 @@ function createCartoMap(mapElement, errorElementId) {
     showMapLoadError(
       errorElementId,
       "No se pudieron cargar mosaicos de CARTO",
-      "Verifica la clave, su restricción de dominio y tu conexión a internet."
+      "Verifica tu conexión a internet."
     );
   });
   tiles.addTo(map);
@@ -260,17 +279,203 @@ function toast(message, kind = "success") {
   window.setTimeout(() => toastNode.remove(), 3600);
 }
 
+if (storageLoadError) {
+  toast("No se pudieron leer los datos guardados; se muestran datos de demostración.", "error");
+}
+
 async function apiRequest(url, method = "GET", data = null) {
-  const headers = { Accept: "application/json" };
-  const options = { method, headers, credentials: "same-origin" };
-  if (data !== null) {
-    headers["Content-Type"] = "application/json";
-    headers["X-CSRFToken"] = document.querySelector('#loginForm [name="csrfmiddlewaretoken"]').value;
-    options.body = JSON.stringify(data);
+  const path = url.split("?")[0];
+  const payload = data || {};
+  const now = new Date().toISOString();
+  let result;
+
+  if (path === "/api/operations/" && method === "POST") {
+    const required = ["client", "item", "origin", "destination", "transport"];
+    const values = Object.fromEntries(required.map((key) => [key, String(payload[key] || "").trim()]));
+    if (required.some((key) => !values[key])) {
+      throw new Error("Completa cliente, mercancía, origen, destino y transporte.");
+    }
+    const transports = ["Marítimo", "Terrestre", "Carretero", "Aéreo", "Ferroviario", "Multimodal"];
+    if (!transports.includes(values.transport)) throw new Error("El medio de transporte no es válido.");
+    const quantity = Number(payload.quantity || 1);
+    const price = Number(payload.price || 0);
+    if (!Number.isInteger(quantity) || quantity < 1) throw new Error("La cantidad debe ser al menos 1.");
+    if (!Number.isFinite(price) || price < 0) throw new Error("El precio debe ser un número válido y no negativo.");
+    const client = clients.find((item) => item.name.toLowerCase() === values.client.toLowerCase()) || {
+      name: values.client, country: "Por confirmar", contact: String(payload.recipient || "Por confirmar").trim(),
+      email: "", operations: 0, status: "Activo"
+    };
+    if (!clients.includes(client)) clients.unshift(client);
+    const latestNumber = operations.reduce((latest, operation) => {
+      const match = /^HB-(\d+)$/.exec(operation.id);
+      return match ? Math.max(latest, Number(match[1])) : latest;
+    }, 24000);
+    const operation = {
+      id: "HB-" + (latestNumber + 1), client: client.name, origin: values.origin,
+      destination: values.destination, transport: values.transport, status: "Preparación",
+      progress: 8, eta: "Por estimar", updated: "Hace un momento", item: values.item,
+      recipient: String(payload.recipient || "Por confirmar").trim(),
+      address: String(payload.address || values.destination).trim(), quantity, price,
+      originCoords: payload.originCoords || null, coords: payload.coords || null,
+      risk: { delay: 7, damage: 14, customs: 13, weather: 31, loss: 38 }, createdAt: now
+    };
+    client.operations += 1;
+    operations.unshift(operation);
+    result = { operation, client };
+  } else if (path === "/api/clients/" && method === "POST") {
+    const name = String(payload.name || "").trim();
+    const country = String(payload.country || "").trim();
+    const contact = String(payload.contact || "").trim();
+    if (!name || !country || !contact) throw new Error("Nombre, país y persona de contacto son obligatorios.");
+    if (name.length > 180) throw new Error("El nombre del cliente es demasiado largo.");
+    if (clients.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error("Ya existe un cliente con ese nombre.");
+    }
+    const client = { name, country, contact, email: String(payload.email || "").trim(), operations: 0, status: "Activo" };
+    clients.unshift(client);
+    result = { client };
+  } else if (path === "/api/inventory/" && method === "POST") {
+    const sku = String(payload.sku || "").trim();
+    const name = String(payload.name || "").trim();
+    const quantity = Number(payload.quantity);
+    const lowStockThreshold = Number(payload.lowStockThreshold);
+    const categories = ["Electrónica", "Hogar", "Alimentos", "Ropa", "Refacciones", "General"];
+    const units = ["pieza", "caja", "paquete", "kg", "litro"];
+    if (!sku || sku.length > 60) throw new Error("El SKU es obligatorio y debe tener hasta 60 caracteres.");
+    if (!name || name.length > 180) throw new Error("El nombre es obligatorio y debe tener hasta 180 caracteres.");
+    if (inventoryItems.some((item) => item.sku.toLowerCase() === sku.toLowerCase())) {
+      throw new Error("Ya existe un producto con ese SKU.");
+    }
+    if (!categories.includes(payload.category) || !units.includes(payload.unit)) {
+      throw new Error("La categoría o unidad de inventario no es válida.");
+    }
+    if (!Number.isInteger(quantity) || quantity < 0 || !Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) {
+      throw new Error("Las existencias y el mínimo de inventario no pueden ser negativos.");
+    }
+    const coords = payload.coords;
+    if (coords && (coords.length !== 2 || !Number.isFinite(Number(coords[0])) || !Number.isFinite(Number(coords[1])) ||
+        Number(coords[0]) < -90 || Number(coords[0]) > 90 || Number(coords[1]) < -180 || Number(coords[1]) > 180)) {
+      throw new Error("Las coordenadas de inventario no son válidas.");
+    }
+    const item = {
+      id: inventoryItems.reduce((highest, current) => Math.max(highest, current.id), 0) + 1,
+      sku, name, category: payload.category, quantity, unit: payload.unit, lowStockThreshold,
+      location: String(payload.location || "").trim(), coords: coords || null,
+      status: quantity === 0 ? "Agotado" : quantity <= lowStockThreshold ? "Bajo" : "Disponible",
+      updated: "Hace un momento", createdAt: now
+    };
+    inventoryItems.push(item);
+    result = { item };
+  } else if (/^\/api\/inventory\/\d+\/stock\/$/.test(path) && method === "POST") {
+    const itemId = Number(path.split("/")[3]);
+    const item = inventoryItems.find((entry) => entry.id === itemId);
+    const quantity = Number(payload.quantity);
+    if (!item) throw new Error("No se encontró el producto de inventario.");
+    if (!Number.isInteger(quantity) || quantity < 0) throw new Error("Las existencias no pueden ser negativas.");
+    item.quantity = quantity;
+    item.status = quantity === 0 ? "Agotado" : quantity <= item.lowStockThreshold ? "Bajo" : "Disponible";
+    item.updated = "Hace un momento";
+    result = { item };
+  } else if (path === "/api/risks/" && method === "POST") {
+    const operation = operations.find((item) => item.id === payload.operation);
+    const keys = ["delay", "damage", "customs", "weather", "loss"];
+    const value = Number(payload.value);
+    if (!operation) throw new Error("No se encontró el embarque seleccionado.");
+    if (!keys.includes(payload.key)) throw new Error("El tipo de riesgo no es válido.");
+    if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error("El riesgo debe estar entre 0 y 100.");
+    operation.risk[payload.key] = value;
+    operation.updated = "Hace un momento";
+    result = { operation: operation.id, key: payload.key, value };
+  } else if (path === "/api/customs/" && method === "POST") {
+    const declarationType = String(payload.type || "Revisión documental").trim();
+    const office = String(payload.office || "Por asignar").trim();
+    if (!declarationType || declarationType.length > 160) throw new Error("El tipo de declaración debe tener entre 1 y 160 caracteres.");
+    if (!office || office.length > 120) throw new Error("La aduana debe tener entre 1 y 120 caracteres.");
+    const operationRef = String(payload.operation || "").trim();
+    if (operationRef && !operations.some((item) => item.id === operationRef)) throw new Error("No se encontró el embarque seleccionado.");
+    const year = new Date().getFullYear();
+    const latestNumber = customsReviews.reduce((latest, review) => {
+      const match = new RegExp("^AD-" + year + "-(\\d+)$").exec(review.reference);
+      return match ? Math.max(latest, Number(match[1])) : latest;
+    }, 0);
+    const customsReview = {
+      reference: "AD-" + year + "-" + String(latestNumber + 1).padStart(4, "0"),
+      operation: operationRef, type: declarationType, office,
+      status: "En revisión", updated: "Hace un momento", note: String(payload.note || "").trim()
+    };
+    customsReviews.unshift(customsReview);
+    result = { customsReview };
+  } else if (/^\/api\/customs\/[^/]+\/$/.test(path) && method === "PUT") {
+    const reference = decodeURIComponent(path.split("/")[3]);
+    const customsReview = customsReviews.find((item) => item.reference === reference);
+    if (!customsReview) throw new Error("No se encontró la revisión aduanera.");
+    if (payload.operation && !operations.some((item) => item.id === payload.operation)) {
+      throw new Error("No se encontró el embarque seleccionado.");
+    }
+    Object.assign(customsReview, {
+      operation: String(payload.operation || ""),
+      type: String(payload.type || "").trim(),
+      office: String(payload.office || "").trim(),
+      note: String(payload.note || "").trim(),
+      status: String(payload.status || customsReview.status),
+      updated: "Hace un momento"
+    });
+    result = { customsReview };
+  } else if (/^\/api\/alerts\/[^/]+\/toggle\/$/.test(path) && method === "POST") {
+    const reference = decodeURIComponent(path.split("/")[3]);
+    const alert = alerts.find((item) => item.id === reference);
+    if (!alert) throw new Error("No se encontró la alerta.");
+    alert.open = !alert.open;
+    alert.time = "Hace un momento";
+    result = { alert };
+  } else if (path === "/api/alerts/resolve-all/" && method === "POST") {
+    const updated = alerts.filter((alert) => alert.open).length;
+    alerts.forEach((alert) => { alert.open = false; alert.time = "Hace un momento"; });
+    result = { updated };
+  } else if (/^\/api\/operations\/[^/]+\/advance\/$/.test(path) && method === "POST") {
+    const reference = decodeURIComponent(path.split("/")[3]);
+    const operation = operations.find((item) => item.id === reference);
+    if (!operation) throw new Error("No se encontró el embarque.");
+    operation.progress = Math.min(100, operation.progress + 15);
+    if (operation.progress === 100) {
+      operation.status = "En destino";
+      operation.eta = "Entregado";
+    } else if (operation.progress < 20) {
+      operation.status = "Preparación";
+      operation.eta = "Por estimar";
+    } else {
+      operation.status = "En tránsito";
+      operation.eta = Math.max(1, Math.round((100 - operation.progress) / 8)) + " h";
+    }
+    operation.updated = "Hace un momento";
+    result = { operation };
+  } else if (path === "/api/documents/" && method === "POST") {
+    if (!operations.some((item) => item.id === payload.operation)) throw new Error("No se encontró el embarque.");
+    const mode = String(payload.mode || "");
+    const index = Number(payload.index);
+    if (!transportDocuments[mode] || !Number.isInteger(index) || index < 0 || index >= transportDocuments[mode].length) {
+      throw new Error("Los datos del documento no son válidos.");
+    }
+    if (!state.checkedDocuments[payload.operation]) state.checkedDocuments[payload.operation] = {};
+    if (!state.checkedDocuments[payload.operation][mode]) state.checkedDocuments[payload.operation][mode] = [];
+    const selected = new Set(state.checkedDocuments[payload.operation][mode]);
+    if (payload.checked) selected.add(index);
+    else selected.delete(index);
+    state.checkedDocuments[payload.operation][mode] = [...selected];
+    result = { operation: payload.operation, mode, index, checked: Boolean(payload.checked) };
+  } else {
+    throw new Error("La acción solicitada no está disponible en el modo local.");
   }
-  const response = await fetch(url, options);
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || "No se pudo completar la solicitud.");
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      operations, clients, alerts, customs: customsReviews, inventory: inventoryItems,
+      checkedDocuments: state.checkedDocuments
+    }));
+  } catch (error) {
+    console.error("No se pudieron guardar los cambios en este navegador.", error);
+    throw new Error("No se pudieron guardar los cambios en este navegador. Revisa el almacenamiento y vuelve a intentar.");
+  }
   return result;
 }
 
@@ -417,10 +622,6 @@ function initializeOperationsMap() {
   const mapElement = document.getElementById("operationsMap");
   if (!mapElement) return;
   disposeOperationsMap();
-  if (!cartoBasemapApiKey) {
-    showMissingCartoApiKey("mapLoadError");
-    return;
-  }
   try {
     operationsMap = createCartoMap(mapElement, "mapLoadError");
   } catch (error) {
@@ -570,12 +771,12 @@ function renderDashboard() {
     '<section class="dashboard-hero"><div class="hero-copy"><span class="hero-kicker"><i></i> OPERACIONES · VISTA EN VIVO</span><h2>La logística<br>en <em>movimiento.</em></h2>' +
     '<p>Una lectura rápida de tus rutas, entregas y alertas. Todo en un solo pulso.</p><div class="hero-actions"><button class="button button-hero" data-view="map">Explorar mapa <span>↗</span></button><span class="hero-date">DATOS DE DEMOSTRACIÓN</span></div></div>' +
     '<article class="hero-trend"><div class="hero-trend-heading"><div><span>ACTIVIDAD RECIENTE</span><strong>Ritmo de embarques</strong></div><span class="trend-period">12 MESES</span></div>' +
-    renderDashboardTrend() + '<div class="hero-trend-foot"><span><i></i> Registros mensuales</span><strong>' + operations.length + ' <small>en la base</small></strong></div></article>' +
+    renderDashboardTrend() + '<div class="hero-trend-foot"><span><i></i> Registros mensuales</span><strong>' + operations.length + ' <small>locales</small></strong></div></article>' +
     '<div class="hero-orbit hero-orbit-one"></div><div class="hero-orbit hero-orbit-two"></div></section>' +
     '<section class="metric-grid dashboard-metrics" aria-label="Indicadores principales">' +
-    metricCard("Embarques registrados", String(operations.length), "Registros guardados en SQLite", "▣", "blue", "Base de datos local") +
+    metricCard("Embarques registrados", String(operations.length), "Registros guardados en este navegador", "▣", "blue", "Almacenamiento local") +
     metricCard("Operaciones en proceso", String(activeOperations), "Aún no han llegado a destino", "↗", "cyan", "Seguimiento local") +
-    metricCard("Entregas en destino", String(completedOperations), "Operaciones completadas", "✓", "green", "Base de datos local") +
+    metricCard("Entregas en destino", String(completedOperations), "Operaciones completadas", "✓", "green", "Almacenamiento local") +
     metricCard("Alertas por revisar", String(openAlerts), "Incidencias abiertas", "!", "amber", "Atención operativa") +
     '</section><section class="dashboard-analytics"><article class="panel analytics-volume"><div class="panel-heading"><div><span class="panel-kicker">TENDENCIA</span><h2>Volumen de embarques</h2><p>Registros guardados por mes</p></div><button class="link-button" data-view="reports">Ver reportes <span>↗</span></button></div>' +
     renderDashboardBars() + '</article><article class="panel analytics-modes"><div class="panel-heading"><div><span class="panel-kicker">COMPOSICIÓN</span><h2>Mezcla de transporte</h2><p>Según los registros guardados</p></div></div>' +
@@ -584,7 +785,7 @@ function renderDashboard() {
     statusDistribution() + '<div class="activity-heading"><h3>Actividad reciente</h3><button class="link-button" data-view="alerts">Ver todas</button></div><div class="activity-list">' +
     activityItems.map((item) => '<div class="activity-item"><span class="activity-icon activity-' + item[3] + '">' + item[0] +
       '</span><div><strong>' + item[1] + "</strong><small>" + item[2] + "</small></div></div>").join("") +
-    '</div></article></section><section class="panel recent-panel"><div class="panel-heading"><div><h2>Operaciones recientes</h2><p>Últimos embarques guardados en la base de datos</p></div><button class="button button-secondary" data-view="shipments">Ver embarques <span>→</span></button></div>' +
+    '</div></article></section><section class="panel recent-panel"><div class="panel-heading"><div><h2>Operaciones recientes</h2><p>Últimos embarques guardados en este navegador</p></div><button class="button button-secondary" data-view="shipments">Ver embarques <span>→</span></button></div>' +
     operationTable(recent) + "</section>";
 }
 
@@ -609,10 +810,10 @@ function renderDashboardTrend() {
 function renderDashboardBars() {
   const data = monthlyOperationCounts();
   const maximum = Math.max(1, ...data.map((month) => month.count));
-  return   '<div class="dashboard-bar-chart" role="img" aria-label="Embarques registrados por mes en la base de datos">' + data.map((item, index) =>
+  return   '<div class="dashboard-bar-chart" role="img" aria-label="Embarques registrados por mes en este navegador">' + data.map((item, index) =>
     '<div class="dashboard-bar-column"><span class="dashboard-bar-value">' + item.count + '</span><i class="dashboard-bar dashboard-bar-' + (index === data.length - 1 ? "highlight" : "default") +
     '" style="--bar-height:' + (item.count ? Math.max(8, item.count / maximum * 100) : 3) + '%"></i><small>' + item.label + '</small></div>'
-  ).join("") + '</div><div class="dashboard-chart-note"><span><i></i> Embarques registrados</span><small>Base de datos · últimas 12 mensualidades</small></div>';
+  ).join("") + '</div><div class="dashboard-chart-note"><span><i></i> Embarques registrados</span><small>Datos locales · últimas 12 mensualidades</small></div>';
 }
 
 function monthlyOperationCounts() {
@@ -797,10 +998,6 @@ function initializeInventoryMap() {
   const mapElement = document.getElementById("inventoryMap");
   if (!mapElement) return;
   disposeInventoryMap();
-  if (!cartoBasemapApiKey) {
-    showMissingCartoApiKey("inventoryMapLoadError");
-    return;
-  }
   try {
     inventoryMap = createCartoMap(mapElement, "inventoryMapLoadError");
   } catch (error) {
@@ -868,7 +1065,7 @@ function renderDocuments() {
   const checked = selectedOperation && state.checkedDocuments[selectedOperation.id] &&
     state.checkedDocuments[selectedOperation.id][state.documentMode] || [];
   return pageHeading("documents", '<span class="demo-label"><i></i> Checklist persistente</span>') +
-    '<section class="panel docs-panel"><div class="panel-heading"><div><h2>Documentación según el transporte</h2><p>El checklist se guarda por embarque en la base de datos.</p></div><div class="docs-select-group"><label class="mode-select"><span>Embarque</span><select id="documentOperation">' +
+    '<section class="panel docs-panel"><div class="panel-heading"><div><h2>Documentación según el transporte</h2><p>El checklist se guarda en este navegador.</p></div><div class="docs-select-group"><label class="mode-select"><span>Embarque</span><select id="documentOperation">' +
     operations.map((operation) => '<option value="' + escapeHTML(operation.id) + '" ' + (operation.id === state.documentOperation ? "selected" : "") + ">" +
       escapeHTML(operation.id + " · " + operation.client) + "</option>").join("") +
     '</select></label><label class="mode-select"><span>Medio</span><select id="documentMode">' +
@@ -939,10 +1136,10 @@ function renderCustoms() {
   const reviews = customsReviews;
   const countStatus = (status) => reviews.filter((review) => review.status === status).length;
   return pageHeading("customs", '<button class="button button-secondary" data-action="customs-note">＋ Registrar revisión</button>') +
-    '<div class="metric-grid metric-grid-compact">' + metricCard("En revisión", String(countStatus("En revisión")), "Expedientes en validación", "◷", "blue", "Base de datos") +
-    metricCard("Liberados", String(countStatus("Liberado")), "Con estatus liberado", "✓", "green", "Base de datos") +
-    metricCard("Retenidos", String(countStatus("Retenido")), "Requieren atención", "!", "amber", "Base de datos") +
-    metricCard("Pendientes", String(countStatus("Pendiente")), "Por revisar", "▤", "cyan", "Base de datos") +
+    '<div class="metric-grid metric-grid-compact">' + metricCard("En revisión", String(countStatus("En revisión")), "Expedientes en validación", "◷", "blue", "Almacenamiento local") +
+    metricCard("Liberados", String(countStatus("Liberado")), "Con estatus liberado", "✓", "green", "Almacenamiento local") +
+    metricCard("Retenidos", String(countStatus("Retenido")), "Requieren atención", "!", "amber", "Almacenamiento local") +
+    metricCard("Pendientes", String(countStatus("Pendiente")), "Por revisar", "▤", "cyan", "Almacenamiento local") +
     '</div><section class="panel"><div class="panel-heading"><div><h2>Control de despachos</h2><p>Registros de revisión aduanera guardados localmente.</p></div><span class="subtle-count">' +
     reviews.length + " registros</span></div><div class=\"table-scroll\"><table class=\"data-table\"><thead><tr><th>Referencia aduanal</th><th>Embarque</th><th>Tipo</th><th>Aduana</th><th>Estado</th><th>Última actualización</th><th>Acción</th></tr></thead><tbody>" +
     (reviews.length ? reviews.map((review) => "<tr><td><strong>" + escapeHTML(review.reference) + "</strong></td><td>" + escapeHTML(review.operation || "Sin asignar") +
@@ -954,7 +1151,7 @@ function renderCustoms() {
 
 function renderClients() {
   return pageHeading("clients", '<button class="button button-primary" data-action="new-client">＋ Agregar cliente</button>') +
-    '<section class="panel"><div class="panel-heading"><div><h2>Directorio de clientes</h2><p>Contactos y actividad guardados en la base de datos.</p></div><span class="subtle-count">' +
+    '<section class="panel"><div class="panel-heading"><div><h2>Directorio de clientes</h2><p>Contactos y actividad guardados en este navegador.</p></div><span class="subtle-count">' +
     clients.length + " cuentas</span></div><div class=\"table-scroll\"><table class=\"data-table\"><thead><tr><th>Cliente</th><th>País</th><th>Contacto</th><th>Operaciones</th><th>Estado</th><th>Acción</th></tr></thead><tbody>" +
     clients.map((client, index) => "<tr><td><div class=\"client-cell\"><span class=\"client-avatar avatar-" + (index % 4) + "\">" + escapeHTML(client.name.charAt(0)) +
       "</span><strong>" + escapeHTML(client.name) + "</strong></div></td><td>" + escapeHTML(client.country) + "</td><td>" + escapeHTML(client.contact) +
@@ -972,7 +1169,7 @@ function renderAlerts() {
     '<div class="alert-summary-grid"><article class="panel alert-summary alert-summary-high"><span>Alta prioridad</span><strong>' +
     activeAlerts.filter((alert) => alert.severity === "Alta").length + '</strong><small>Atención inmediata</small></article><article class="panel alert-summary alert-summary-medium"><span>Prioridad media</span><strong>' +
     activeAlerts.filter((alert) => alert.severity === "Media").length + '</strong><small>Seguimiento recomendado</small></article><article class="panel alert-summary alert-summary-closed"><span>Resueltas</span><strong>' +
-    alerts.filter((alert) => !alert.open).length + '</strong><small>Registros de la base</small></article></div><section class="panel"><div class="panel-heading"><div><h2>Bandeja de alertas</h2><p>Alertas registradas y asociadas con operaciones.</p></div><select id="alertFilter" aria-label="Filtrar alertas"><option value="open">Abiertas</option><option value="all">Todas</option></select></div><div class="alert-list" id="alertList">' +
+    alerts.filter((alert) => !alert.open).length + '</strong><small>Registros guardados</small></article></div><section class="panel"><div class="panel-heading"><div><h2>Bandeja de alertas</h2><p>Alertas registradas y asociadas con operaciones.</p></div><select id="alertFilter" aria-label="Filtrar alertas"><option value="open">Abiertas</option><option value="all">Todas</option></select></div><div class="alert-list" id="alertList">' +
     renderAlertItems(activeAlerts) + "</div></section>";
 }
 
@@ -1000,10 +1197,10 @@ function renderReports() {
     '<section class="report-filter panel"><div><h2>Resumen de desempeño</h2><p>Indicadores calculados a partir de los registros guardados.</p></div><select id="reportPeriod" aria-label="Periodo del reporte"><option value="12" ' + (state.reportMonths === 12 ? "selected" : "") +
     '>Últimos 12 meses</option><option value="6" ' + (state.reportMonths === 6 ? "selected" : "") + '>Últimos 6 meses</option><option value="3" ' +
     (state.reportMonths === 3 ? "selected" : "") + '>Últimos 3 meses</option></select></section>' +
-    '<div class="metric-grid metric-grid-compact">' + metricCard("Embarques gestionados", String(operations.length), "Total de registros", "▣", "blue", "Base de datos") +
-    metricCard("Entregas en destino", String(delivered), "Operaciones completadas", "✓", "green", "Base de datos") +
-    metricCard("Avance promedio", averageProgress + "%", "Progreso registrado", "◷", "cyan", "Base de datos") +
-    metricCard("Alertas abiertas", String(alerts.filter((alert) => alert.open).length), "Pendientes de revisión", "!", "amber", "Base de datos") +
+    '<div class="metric-grid metric-grid-compact">' + metricCard("Embarques gestionados", String(operations.length), "Total de registros", "▣", "blue", "Almacenamiento local") +
+    metricCard("Entregas en destino", String(delivered), "Operaciones completadas", "✓", "green", "Almacenamiento local") +
+    metricCard("Avance promedio", averageProgress + "%", "Progreso registrado", "◷", "cyan", "Almacenamiento local") +
+    metricCard("Alertas abiertas", String(alerts.filter((alert) => alert.open).length), "Pendientes de revisión", "!", "amber", "Almacenamiento local") +
     '</div><section class="report-grid"><article class="panel chart-panel"><div class="panel-heading"><div><h2>Volumen de embarques</h2><p id="reportChartCaption">Embarques registrados por mes</p></div><span class="chart-legend"><i></i> Embarques</span></div><div class="bar-chart">' +
     months.map((item) => '<div class="chart-column"><span class="chart-bar" style="height:' + (item.count ? Math.max(8, item.count / maximum * 100) : 3) +
       '%" title="' + item.count + ' operaciones"></span><small>' + item.label + "</small></div>").join("") +
@@ -1046,7 +1243,7 @@ function openNewOperation() {
     '<label>Cantidad<input name="quantity" type="number" min="1" value="1" required></label><label>Precio estimado por unidad (MXN)<input name="price" type="number" min="0" step="0.01" value="0"></label>' +
     '<label class="form-full">Dirección completa<input name="address" id="newOperationAddress" placeholder="Calle, número, colonia, ciudad y CP"></label></div>' +
     '<div class="modal-form-actions"><button class="text-action" type="button" data-action="use-current-location">⌖ Usar ubicación de este dispositivo</button><span>Ubicación opcional; requiere permiso.</span></div>' +
-    '<div class="notice notice-info"><span>i</span><p>El registro se guardará en la base de datos local. La dirección puede escribirse manualmente o completarse con la ubicación del dispositivo.</p></div>' +
+    '<div class="notice notice-info"><span>i</span><p>El registro se guardará en este navegador y no se sincroniza con otros dispositivos. La dirección puede escribirse manualmente o completarse con la ubicación del dispositivo.</p></div>' +
     '<button class="button button-primary modal-submit" type="submit">Guardar embarque <span>→</span></button></form>', true);
   document.getElementById("newOperationForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1075,7 +1272,7 @@ function openNewOperation() {
     updateClientCache(result.client);
     state.newOperationLocation = null;
     closeModal();
-    toast("Embarque " + operation.id + " guardado en la base de datos.");
+    toast("Embarque " + operation.id + " guardado en este navegador.");
     navigate("shipments");
     openOperationDetails(operation.id);
   });
@@ -1139,7 +1336,7 @@ function openNewClient() {
     updateClientCache(result.client);
     closeModal();
     renderView("clients");
-    toast("Cliente guardado en la base de datos.");
+    toast("Cliente guardado en este navegador.");
   });
 }
 
@@ -1149,7 +1346,7 @@ function showClient(name) {
   const clientOperations = operations.filter((operation) => operation.client === name);
   openModal("Cuenta de cliente", "DIRECTORIO", '<div class="client-detail"><span class="client-avatar avatar-0">' + escapeHTML(client.name.charAt(0)) +
     '</span><div><h3>' + escapeHTML(client.name) + '</h3><p>' + escapeHTML(client.country) + " · Contacto: " + escapeHTML(client.contact) +
-    '</p><p>' + client.operations + " operaciones registradas en la base de datos.</p></div></div><h3 class=\"modal-section-title\">Operaciones asociadas</h3>" +
+    '</p><p>' + client.operations + " operaciones registradas en este navegador.</p></div></div><h3 class=\"modal-section-title\">Operaciones asociadas</h3>" +
     (clientOperations.length ? operationTable(clientOperations) : '<div class="empty-state"><strong>Sin operaciones asociadas</strong></div>'), true);
 }
 
@@ -1194,7 +1391,6 @@ function openNewInventoryItem() {
       toast(error.message, "error");
       return;
     }
-    inventoryItems.push(result.item);
     closeModal();
     state.inventoryQuery = "";
     state.inventoryCategory = "Todas";

@@ -1,4 +1,3 @@
-{% load static %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -13,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="{% static 'operations/style.css' %}?v=20261124-carto">
+  <link rel="stylesheet" href="operations/static/operations/style.css?v=20261125-static">
 </head>
 <body>
   <section class="login-screen" id="loginScreen" aria-labelledby="loginTitle">
@@ -21,11 +20,10 @@
       <span class="theme-icon" aria-hidden="true">☀</span><span class="theme-label">Claro</span>
     </button>
     <div class="login-brand">
-      <img src="{% static 'operations/Image/Infinityoperaciones2.jpeg' %}" alt="Infinity Operations" class="infinity-logo">
+      <img src="operations/static/operations/Image/Infinityoperaciones2.jpeg" alt="Infinity Operations" class="infinity-logo">
       <span class="login-brand-caption">LOGISTICS CONTROL CENTER</span>
     </div>
     <form class="login-card" id="loginForm">
-      {% csrf_token %}
       <p class="eyebrow">CENTRO DE CONTROL LOGÍSTICO</p>
       <h1 id="loginTitle">Cada operación,<br>en perspectiva.</h1>
       <p class="login-copy">Explora un centro de operaciones interactivo para visualizar embarques, documentos y alertas.</p>
@@ -38,20 +36,19 @@
     </form>
     <div class="login-bottom">
       <span>Experiencia de demostración</span>
-      <img src="{% static 'operations/Image/LogoUTO.jpg' %}" alt="Universidad Tecnológica de Oriente">
+      <img src="operations/static/operations/Image/LogoUTO.jpg" alt="Universidad Tecnológica de Oriente">
     </div>
   </section>
 
   <div class="app-shell" id="appShell" hidden>
     <aside class="sidebar" id="sidebar">
       <a class="sidebar-brand" href="#" data-nav="dashboard" aria-label="Infinity Operations, panel principal">
-        <img src="{% static 'operations/Image/Infinityoperaciones2.jpeg' %}" alt="Infinity Operations" class="infinity-logo">
+        <img src="operations/static/operations/Image/Infinityoperaciones2.jpeg" alt="Infinity Operations" class="infinity-logo">
       </a>
       <nav class="side-nav" aria-label="Navegación principal">
         <p class="nav-group-title">GENERAL</p>
         <button class="nav-item active" type="button" data-view="dashboard"><span class="nav-icon">▦</span>Panel principal</button>
         <button class="nav-item" type="button" data-view="map"><span class="nav-icon">⌖</span>Mapa operativo</button>
-
         <p class="nav-group-title">OPERACIONES</p>
         <button class="nav-item" type="button" data-view="shipments"><span class="nav-icon">▣</span>Embarques <span class="nav-count" id="shipmentNavCount">0</span></button>
         <button class="nav-item" type="button" data-view="transport"><span class="nav-icon">⇄</span>Transporte</button>
@@ -60,18 +57,16 @@
         <button class="nav-item" type="button" data-view="transport-documents"><span class="nav-icon">▧</span>Documentos por transporte</button>
         <button class="nav-item" type="button" data-view="risk"><span class="nav-icon">◇</span>Panel de probabilidades</button>
         <button class="nav-item" type="button" data-view="customs"><span class="nav-icon">⚑</span>Control aduanero</button>
-
         <p class="nav-group-title">ADMINISTRACIÓN</p>
         <button class="nav-item" type="button" data-view="clients"><span class="nav-icon">♙</span>Clientes</button>
         <button class="nav-item" type="button" data-view="alerts"><span class="nav-icon">◉</span>Alertas e incidencias <span class="nav-count warning-count" id="alertNavCount">3</span></button>
         <button class="nav-item" type="button" data-view="reports"><span class="nav-icon">▥</span>Reportes</button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="demo-state"><span class="online-dot"></span><div><strong>Sistema conectado</strong><small>SQLite · datos persistentes</small></div></div>
-        <div class="university-brand"><img src="{% static 'operations/Image/LogoUTO.jpg' %}" alt="Universidad Tecnológica de Oriente"><span>Proyecto académico</span></div>
+        <div class="demo-state"><span class="online-dot"></span><div><strong>Modo sin conexión a servidor</strong><small>Datos guardados en este navegador</small></div></div>
+        <div class="university-brand"><img src="operations/static/operations/Image/LogoUTO.jpg" alt="Universidad Tecnológica de Oriente"><span>Proyecto académico</span></div>
       </div>
     </aside>
-
     <div class="main-column">
       <header class="topbar">
         <button class="mobile-menu" id="mobileMenu" type="button" aria-label="Abrir navegación">☰</button>
@@ -84,10 +79,9 @@
         </div>
       </header>
       <main class="page-content" id="pageContent" tabindex="-1"></main>
-      <footer class="content-footer"><span>Infinity Operations · Logistics Control Center</span><span>Información operativa guardada en la base de datos local.</span></footer>
+      <footer class="content-footer"><span>Infinity Operations · Logistics Control Center</span><span>Los cambios se guardan en este navegador y no se sincronizan con otros dispositivos.</span></footer>
     </div>
   </div>
-
   <div class="modal-backdrop" id="modalBackdrop" hidden>
     <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <header class="modal-header">
@@ -97,12 +91,10 @@
       <div class="modal-content" id="modalContent"></div>
     </section>
   </div>
-
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  {{ dashboard_data|json_script:"infinity-data" }}
-  {{ carto_basemap_api_key|json_script:"carto-basemap-api-key" }}
-  <script>window.INFINITY_STATIC_BASE = "{% static 'operations/' %}";</script>
+  <script>window.INFINITY_STATIC_BASE = "operations/static/operations/";</script>
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="{% static 'operations/script.js' %}?v=20261124-carto-key"></script>
+  <script src="operations/static/operations/demo-data.js"></script>
+  <script src="operations/static/operations/script.js?v=20261125-static"></script>
 </body>
 </html>
