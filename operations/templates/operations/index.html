@@ -1,0 +1,108 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Infinity Operations: centro de control logístico para embarques, documentos y alertas.">
+  <meta name="theme-color" content="#081321">
+  <title>Infinity Operations | Centro logístico</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="preconnect" href="https://basemaps.cartocdn.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="{% static 'operations/style.css' %}?v=20261124-carto">
+</head>
+<body>
+  <section class="login-screen" id="loginScreen" aria-labelledby="loginTitle">
+    <button class="theme-toggle login-theme-toggle" type="button" aria-label="Cambiar tema">
+      <span class="theme-icon" aria-hidden="true">☀</span><span class="theme-label">Claro</span>
+    </button>
+    <div class="login-brand">
+      <img src="{% static 'operations/Image/Infinityoperaciones2.jpeg' %}" alt="Infinity Operations" class="infinity-logo">
+      <span class="login-brand-caption">LOGISTICS CONTROL CENTER</span>
+    </div>
+    <form class="login-card" id="loginForm">
+      {% csrf_token %}
+      <p class="eyebrow">CENTRO DE CONTROL LOGÍSTICO</p>
+      <h1 id="loginTitle">Cada operación,<br>en perspectiva.</h1>
+      <p class="login-copy">Explora un centro de operaciones interactivo para visualizar embarques, documentos y alertas.</p>
+      <label for="username">Nombre para la demostración</label>
+      <input id="username" name="username" type="text" placeholder="Ej. Miguel" autocomplete="name">
+      <label for="password">Contraseña</label>
+      <input id="password" name="password" type="password" placeholder="Escribe cualquier contraseña" autocomplete="current-password" required>
+      <button class="button button-primary login-submit" type="submit">Entrar al centro de control <span aria-hidden="true">→</span></button>
+      <p class="login-note">Acceso de demostración · La contraseña no se valida ni se guarda</p>
+    </form>
+    <div class="login-bottom">
+      <span>Experiencia de demostración</span>
+      <img src="{% static 'operations/Image/LogoUTO.jpg' %}" alt="Universidad Tecnológica de Oriente">
+    </div>
+  </section>
+
+  <div class="app-shell" id="appShell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <a class="sidebar-brand" href="#" data-nav="dashboard" aria-label="Infinity Operations, panel principal">
+        <img src="{% static 'operations/Image/Infinityoperaciones2.jpeg' %}" alt="Infinity Operations" class="infinity-logo">
+      </a>
+      <nav class="side-nav" aria-label="Navegación principal">
+        <p class="nav-group-title">GENERAL</p>
+        <button class="nav-item active" type="button" data-view="dashboard"><span class="nav-icon">▦</span>Panel principal</button>
+        <button class="nav-item" type="button" data-view="map"><span class="nav-icon">⌖</span>Mapa operativo</button>
+
+        <p class="nav-group-title">OPERACIONES</p>
+        <button class="nav-item" type="button" data-view="shipments"><span class="nav-icon">▣</span>Embarques <span class="nav-count" id="shipmentNavCount">0</span></button>
+        <button class="nav-item" type="button" data-view="transport"><span class="nav-icon">⇄</span>Transporte</button>
+        <button class="nav-item" type="button" data-view="inventory"><span class="nav-icon">▤</span>Inventario <span class="nav-count" id="inventoryNavCount">0</span></button>
+        <button class="nav-item" type="button" data-view="documents"><span class="nav-icon">▤</span>Documentación</button>
+        <button class="nav-item" type="button" data-view="transport-documents"><span class="nav-icon">▧</span>Documentos por transporte</button>
+        <button class="nav-item" type="button" data-view="risk"><span class="nav-icon">◇</span>Panel de probabilidades</button>
+        <button class="nav-item" type="button" data-view="customs"><span class="nav-icon">⚑</span>Control aduanero</button>
+
+        <p class="nav-group-title">ADMINISTRACIÓN</p>
+        <button class="nav-item" type="button" data-view="clients"><span class="nav-icon">♙</span>Clientes</button>
+        <button class="nav-item" type="button" data-view="alerts"><span class="nav-icon">◉</span>Alertas e incidencias <span class="nav-count warning-count" id="alertNavCount">3</span></button>
+        <button class="nav-item" type="button" data-view="reports"><span class="nav-icon">▥</span>Reportes</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="demo-state"><span class="online-dot"></span><div><strong>Sistema conectado</strong><small>SQLite · datos persistentes</small></div></div>
+        <div class="university-brand"><img src="{% static 'operations/Image/LogoUTO.jpg' %}" alt="Universidad Tecnológica de Oriente"><span>Proyecto académico</span></div>
+      </div>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <button class="mobile-menu" id="mobileMenu" type="button" aria-label="Abrir navegación">☰</button>
+        <div class="topbar-context"><span>INFINITY OPERATIONS</span><strong id="topbarTitle">Panel principal</strong></div>
+        <div class="topbar-actions">
+          <label class="global-search"><span aria-hidden="true">⌕</span><input id="globalSearch" type="search" placeholder="Buscar operación..." aria-label="Buscar operación"></label>
+          <button class="icon-button notification-button" type="button" data-view="alerts" aria-label="Ver alertas">♢<i></i></button>
+          <button class="theme-toggle top-theme-toggle" type="button" aria-label="Cambiar tema"><span class="theme-icon" aria-hidden="true">☀</span><span class="theme-label">Claro</span></button>
+          <button class="profile-button" id="profileButton" type="button" aria-label="Cerrar sesión"><span id="profileInitial">D</span><span class="profile-name" id="profileName">Demo</span><span class="profile-caret">⌄</span></button>
+        </div>
+      </header>
+      <main class="page-content" id="pageContent" tabindex="-1"></main>
+      <footer class="content-footer"><span>Infinity Operations · Logistics Control Center</span><span>Información operativa guardada en la base de datos local.</span></footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-header">
+        <div><p class="eyebrow" id="modalEyebrow">OPERACIÓN</p><h2 id="modalTitle">Detalle</h2></div>
+        <button class="icon-button modal-close" type="button" data-close-modal aria-label="Cerrar">×</button>
+      </header>
+      <div class="modal-content" id="modalContent"></div>
+    </section>
+  </div>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  {{ dashboard_data|json_script:"infinity-data" }}
+  {{ carto_basemap_api_key|json_script:"carto-basemap-api-key" }}
+  <script>window.INFINITY_STATIC_BASE = "{% static 'operations/' %}";</script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="{% static 'operations/script.js' %}?v=20261124-carto-key"></script>
+</body>
+</html>
